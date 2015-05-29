@@ -1,5 +1,4 @@
 import pyshark
-import time
 
 #ip:port:ip:port - lexic. smaller first
 
@@ -18,12 +17,12 @@ class UdpFlow:
         self.prev_time=0
 
     def pushsend(self, packet):
-        self.prev_time=time.time()
+        self.prev_time=packet.sniff_timestamp
         self.send.append(packet)
         return 1
 
     def pushecho(self, packet):
-        self.prev_time=time.time()
+        self.prev_time=packet.sniff_timestamp
         self.echo.append(packet)
         return 1
 
@@ -62,14 +61,16 @@ class TcpFlow:
         #todo - RST - remove from 
     def check_continuity(self, flag, isEcho):
         if ((flag=="0x0004") or (flag=="0x004")):
+            print("WE GOT RESET!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             return False
         if ((flag=="0x0011") or (flag=="0x011") or (flag=="0x0001") or (flag=="0x001")):
+            print("WE GOT FIN!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             if (isEcho):
                 self.fin_second=1
             else:
                 self.fin_first=1
-            #return False
         if ((self.fin_first) and (self.fin_second)):
+            print("BOTH FINS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             self.closed=1
             return False
         if (self.closed):
@@ -87,79 +88,130 @@ class TcpFlow:
             if ((flag=="0x0010") or (flag=="0x010") or (flag=="0x0018") or (flag=="0x018")):
                 self.active=1
             return 1
+        #at this point active, check for closing
         return 1
 
 udp_map={}
 tcp_map={}
-capture = pyshark.LiveCapture(interface='eth0',bpf_filter='ip')
+capture = pyshark.LiveCapture(interface='eth0',bpf_filter='ip and tcp')
 
 prev_time=0
-
-#"garbage collect" for inactive UDP flows
-def garbagetruck(current_stamp):
-    threshold=0
-    for key in list(udp_map):
-        if (current_stamp-udp_map[key].prev_time>threshold):
-            udp_map.pop(key,None)
-            print("Killed UDP flow: "+key)
-            print("#UPD_flows: "+str(len(udp_map)))
 
 #cap=pyshark.FileCapture('hart_ip.pcap')
 
 #####main#####
 
-counter=0
-for packet in capture.sniff_continuously(packet_count=100):
-    counter+=1
-    if (counter%20==0): 
-        print("---still alive - "+str(counter)+", running UDP cleanup---")
-        garbagetruck(time.time())
-    #print(packet)
+for packet in capture.sniff_continuously(packet_count=300000):
+#for i in range(116):
+#    packet=cap[i]
     if (hasattr(packet,"udp")):
-        keysrc=packet.ip.src+':'+packet.udp.srcport
-        keydst=packet.ip.dst+':'+packet.udp.dstport
+        print("UDP")
+        keysrc=packet.ip.src+packet.udp.srcport
+        keydst=packet.ip.dst+packet.udp.dstport
         if (keysrc>keydst):
-            key=keysrc+'-'+keydst
+            key=keydst+keysrc
             if key not in udp_map:
                 udp_map[key]=UdpFlow()
-                print("New UPD flow: "+key)
-                print("#UPD_flows: "+str(len(udp_map)))
             udp_map[key].pushecho(packet)
+            print(key)
         else:
-            key=keysrc+'-'+keydst
+            key=keysrc+keydst
             if key not in udp_map:
                 udp_map[key]=UdpFlow()
-                print("New UPD flow: "+key)
-                print("#UPD_flows: "+str(len(udp_map)))
             udp_map[key].pushsend(packet)
+            print(key)
+        print(len(udp_map))
     elif (hasattr(packet,"tcp")):
+        print("TCP")
+        print(packet)
+        print(len(tcp_map))
         flag=str(packet.tcp.flags)
-        keysrc=packet.ip.src+':'+packet.tcp.srcport
-        keydst=packet.ip.dst+':'+packet.tcp.dstport
+        if ((flag=="0x0011") or (flag=="0x011") or (flag=="0x0001") or (flag=="0x001")):
+            print("FIN??!!")
+        keysrc=packet.ip.src+packet.tcp.srcport
+        keydst=packet.ip.dst+packet.tcp.dstport
         if (keysrc>keydst):
-            key=keysrc+'-'+keydst
+            key=keydst+keysrc
             if key not in tcp_map:
                 f=TcpFlow()
                 if (f.pushecho(packet)):
                     tcp_map[key]=f
-                    print("New TCP flow: "+key)
-                    print("#TCP_flows: "+str(len(tcp_map)))
             else:
                 if (not tcp_map[key].pushecho(packet)):
-                    print("Finished TCP flow: "+key)
-                    print("#TCP_flows: "+str(len(tcp_map)))
+                    print("SHOULD POP!!!!!!!!!!!!!!!")
                     tcp_map.pop(key,None)
         else:
-            key=keysrc+'-'+keydst
+            key=keysrc+keydst
             if key not in tcp_map:
                 f=TcpFlow()
                 if (f.pushsend(packet)):
                     tcp_map[key]=f
-                    print("New TCP flow: "+key)
             else:
                 if (not tcp_map[key].pushsend(packet)):
-                    print("Finished TCP flow: "+key)
-                    print("#TCP_flows: "+str(len(tcp_map)))
+                    print("SHOULD POP!!!!!!!!!!!!!!!")
                     tcp_map.pop(key,None)
     else:
-        pass #most likely ICMP
+        print("Error - no tcp or udp layer on following packet:")
+        print(packet)
+
+
+
+def testfunc():
+    for packet in capture.sniff_continuously(packet_count=300):
+        try:
+            print("=======")
+            print(packet.sniff_time)
+            if (prev_time==0):
+                prev_time=packet.sniff_time
+            else:
+                prev_time=packet.sniff_time-prev_time
+            print(prev_time)
+            print(packet.sniff_timestamp)
+            print(packet.ip.src)
+            print(packet.ip.dst)
+            try:
+                print(packet.udp.srcport)
+                print(packet.udp.dstport)
+            except AttributeError:
+                try:
+                    print(packet.tcp.srcport)
+                    print(packet.tcp.dstport)
+                except AttributeError:
+                    print("???!!!!!")
+                    #print(dir(packet))
+        except AttributeError:
+            print("Error!")
+        try:
+            print(packet.ssh)
+            print(packet)
+        except AttributeError:
+            pass
+
+def testfunc2():
+    try:  
+        print(packet)
+        if (prev_time==0):
+            prev_time=packet.sniff_time
+        else:
+            prev_time=packet.sniff_time-prev_time
+        print(prev_time)
+        print(packet.sniff_timestamp)
+        print(packet.ip.src)
+        print(packet.ip.dst)
+        try:
+            print(packet.udp.srcport)
+            print(packet.udp.dstport)
+        except AttributeError:
+            try:
+                print(packet.tcp.srcport)
+                print(packet.tcp.dstport)
+            except AttributeError:
+                print("???!!!!!")
+                #print(dir(packet))
+    except AttributeError:
+        print("Error!")
+    try:
+        print(packet.ssh)
+        print(packet)
+    except AttributeError:
+        pass
