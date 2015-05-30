@@ -59,7 +59,6 @@ class TcpFlow:
         self.echo.append(packet)
         return 1
 
-        #todo - RST - remove from 
     def check_continuity(self, flag, isEcho):
         if ((flag=="0x0004") or (flag=="0x004")):
             return False
@@ -114,7 +113,6 @@ for packet in capture.sniff_continuously(packet_count=100):
     if (counter%20==0): 
         print("---still alive - "+str(counter)+", running UDP cleanup---")
         garbagetruck(time.time())
-    #print(packet)
     if (hasattr(packet,"udp")):
         keysrc=packet.ip.src+':'+packet.udp.srcport
         keydst=packet.ip.dst+':'+packet.udp.dstport
